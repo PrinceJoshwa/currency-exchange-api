@@ -2,6 +2,7 @@
 // Uses Puppeteer to scrape configured sources. Add or adjust selectors per site.
 
 const puppeteer = require('puppeteer');
+const FallbackScraper = require('./fallback-scraper');
 
 const SOURCE_DEFINITIONS = {
   AR: [
@@ -76,28 +77,49 @@ class Scraper {
   }
 
   async fetchAllSources() {
-    const browser = await puppeteer.launch({ args: ['--no-sandbox','--disable-setuid-sandbox'] });
     try {
-      const page = await browser.newPage();
-      // set user agent to reduce bot-blocking
-      await page.setUserAgent('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36');
-      // fetch all sequentially or parallel by opening multiple pages
-      const tasks = this.sources.map(async src => {
-        const p = await browser.newPage();
-        try {
-          const res = await this.fetchOne(p, src);
-          await p.close();
-          return res;
-        } catch (err) {
-          await p.close();
-          return { ok: false, source: src.url, error: err.message };
-        }
+      // Production-friendly Puppeteer config for Vercel
+      const browser = await puppeteer.launch({
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-accelerated-2d-canvas',
+          '--no-first-run',
+          '--no-zygote',
+          '--single-process',
+          '--disable-gpu'
+        ],
+        headless: 'new'
       });
-      const results = await Promise.all(tasks);
-      await page.close().catch(()=>{});
-      return results;
-    } finally {
-      await browser.close();
+
+      try {
+        const page = await browser.newPage();
+        // set user agent to reduce bot-blocking
+        await page.setUserAgent('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36');
+        // fetch all sequentially or parallel by opening multiple pages
+        const tasks = this.sources.map(async src => {
+          const p = await browser.newPage();
+          try {
+            const res = await this.fetchOne(p, src);
+            await p.close();
+            return res;
+          } catch (err) {
+            await p.close();
+            return { ok: false, source: src.url, error: err.message };
+          }
+        });
+        const results = await Promise.all(tasks);
+        await page.close().catch(() => { });
+        return results;
+      } finally {
+        await browser.close();
+      }
+    } catch (puppeteerError) {
+      console.warn('Puppeteer failed, using fallback scraper:', puppeteerError.message);
+      // Use fallback scraper when Puppeteer fails
+      const fallback = new FallbackScraper(this.region);
+      return await fallback.fetchMockData();
     }
   }
 }

@@ -36,57 +36,45 @@
 // module.exports = DB;
 
 // db.js
-const sqlite3 = require("sqlite3").verbose();
-const path = require("path");
+// In-memory storage for serverless environments like Vercel
+// SQLite files don't persist in serverless functions
 
 class DB {
   constructor(filename = "quotes.db") {
-    const dbPath = path.join(__dirname, filename);
-
-    this.db = new sqlite3.Database(dbPath, (err) => {
-      if (err) console.error("❌ Failed to connect:", err.message);
-      else {
-        console.log("✅ Connected to SQLite DB:", dbPath);
-        this.db.run(
-          `CREATE TABLE IF NOT EXISTS quotes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            source TEXT,
-            buy_price REAL,
-            sell_price REAL,
-            fetched_at TEXT,
-            raw TEXT
-          )`,
-          (err) => {
-            if (err) console.error("❌ Table creation failed:", err.message);
-            else console.log("✅ Table ready");
-          }
-        );
-      }
-    });
+    // Use in-memory storage for production compatibility
+    this.quotes = [];
+    console.log("✅ Using in-memory storage for quotes");
   }
 
   insertQuote(obj) {
-    const sql = `INSERT INTO quotes (source, buy_price, sell_price, fetched_at, raw)
-                 VALUES (?, ?, ?, ?, ?)`;
-    this.db.run(
-      sql,
-      [obj.source, obj.buy_price, obj.sell_price, obj.fetched_at, obj.raw],
-      (err) => {
-        if (err) console.error("❌ Insert failed:", err.message);
+    try {
+      // Keep only last 100 quotes to prevent memory issues
+      if (this.quotes.length >= 100) {
+        this.quotes = this.quotes.slice(-50); // Keep last 50
       }
-    );
+      
+      this.quotes.push({
+        id: Date.now() + Math.random(), // Simple ID generation
+        source: obj.source,
+        buy_price: obj.buy_price,
+        sell_price: obj.sell_price,
+        fetched_at: obj.fetched_at,
+        raw: obj.raw
+      });
+      
+      console.log(`✅ Quote inserted from ${obj.source}`);
+    } catch (err) {
+      console.error("❌ Insert failed:", err.message);
+    }
   }
 
   recent(n = 10) {
-    return new Promise((resolve, reject) => {
-      this.db.all(
-        `SELECT * FROM quotes ORDER BY fetched_at DESC LIMIT ?`,
-        [n],
-        (err, rows) => {
-          if (err) reject(err);
-          else resolve(rows);
-        }
-      );
+    return new Promise((resolve) => {
+      // Return most recent quotes
+      const recent = this.quotes
+        .sort((a, b) => new Date(b.fetched_at) - new Date(a.fetched_at))
+        .slice(0, n);
+      resolve(recent);
     });
   }
 }

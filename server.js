@@ -25,23 +25,37 @@ async function ensureFreshQuotes(maxAgeSeconds = 60) {
   if (now - lastFetchedAt <= maxAgeSeconds * 1000 && lastQuotes.length > 0) {
     return lastQuotes;
   }
-  // fetch fresh from sources
-  const results = await scraper.fetchAllSources();
-  const successful = results.filter(r => r.ok);
-  const saved = successful.map(r => {
-    const obj = {
-      buy_price: r.data.buy_price,
-      sell_price: r.data.sell_price,
-      source: r.source,
-      fetched_at: new Date().toISOString(),
-      raw: JSON.stringify(r.raw || null)
-    };
-    db.insertQuote(obj);
-    return obj;
-  });
-  lastQuotes = saved;
-  lastFetchedAt = Date.now();
-  return results; // return raw results so we can show errors too
+  
+  try {
+    // fetch fresh from sources with timeout
+    const results = await Promise.race([
+      scraper.fetchAllSources(),
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Scraping timeout')), 25000)
+      )
+    ]);
+    
+    const successful = results.filter(r => r.ok);
+    const saved = successful.map(r => {
+      const obj = {
+        buy_price: r.data.buy_price,
+        sell_price: r.data.sell_price,
+        source: r.source,
+        fetched_at: new Date().toISOString(),
+        raw: JSON.stringify(r.raw || null)
+      };
+      db.insertQuote(obj);
+      return obj;
+    });
+    
+    lastQuotes = saved;
+    lastFetchedAt = Date.now();
+    return results; // return raw results so we can show errors too
+  } catch (error) {
+    console.error('Error fetching quotes:', error);
+    // Return cached data if available, otherwise empty array
+    return lastQuotes.length > 0 ? lastQuotes : [];
+  }
 }
 
 app.get('/quotes', async (req, res) => {
@@ -102,7 +116,22 @@ app.get('/slippage', async (req, res) => {
 });
 
 app.get('/', (req, res) => {
-  res.send(`Currency quotes API. REGION=${REGION}. Endpoints: /quotes, /average, /slippage`);
+  res.json({
+    message: 'Currency quotes API',
+    region: REGION,
+    endpoints: ['/quotes', '/average', '/slippage', '/health'],
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    region: REGION,
+    lastFetch: lastFetchedAt ? new Date(lastFetchedAt).toISOString() : 'never',
+    cachedQuotes: lastQuotes.length,
+    uptime: process.uptime()
+  });
 });
 
 app.listen(PORT, () => {
