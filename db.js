@@ -37,22 +37,30 @@
 
 // db.js
 const sqlite3 = require("sqlite3").verbose();
+const path = require("path");
 
 class DB {
-  constructor(filename = ":memory:") {
-    this.db = new sqlite3.Database(filename, (err) => {
-      if (err) console.error("Error opening database:", err.message);
+  constructor(filename = "quotes.db") {
+    const dbPath = path.join(__dirname, filename);
+
+    this.db = new sqlite3.Database(dbPath, (err) => {
+      if (err) console.error("❌ Failed to connect:", err.message);
       else {
-        this.db.run(`
-          CREATE TABLE IF NOT EXISTS quotes (
+        console.log("✅ Connected to SQLite DB:", dbPath);
+        this.db.run(
+          `CREATE TABLE IF NOT EXISTS quotes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             source TEXT,
             buy_price REAL,
             sell_price REAL,
             fetched_at TEXT,
             raw TEXT
-          )
-        `);
+          )`,
+          (err) => {
+            if (err) console.error("❌ Table creation failed:", err.message);
+            else console.log("✅ Table ready");
+          }
+        );
       }
     });
   }
@@ -60,20 +68,25 @@ class DB {
   insertQuote(obj) {
     const sql = `INSERT INTO quotes (source, buy_price, sell_price, fetched_at, raw)
                  VALUES (?, ?, ?, ?, ?)`;
-    this.db.run(sql, [obj.source, obj.buy_price, obj.sell_price, obj.fetched_at, obj.raw], (err) => {
-      if (err) console.error("Insert error:", err.message);
-    });
+    this.db.run(
+      sql,
+      [obj.source, obj.buy_price, obj.sell_price, obj.fetched_at, obj.raw],
+      (err) => {
+        if (err) console.error("❌ Insert failed:", err.message);
+      }
+    );
   }
 
-  recent(n = 10, callback) {
-    const sql = `SELECT * FROM quotes ORDER BY fetched_at DESC LIMIT ?`;
-    this.db.all(sql, [n], (err, rows) => {
-      if (err) {
-        console.error("Query error:", err.message);
-        callback([]);
-      } else {
-        callback(rows);
-      }
+  recent(n = 10) {
+    return new Promise((resolve, reject) => {
+      this.db.all(
+        `SELECT * FROM quotes ORDER BY fetched_at DESC LIMIT ?`,
+        [n],
+        (err, rows) => {
+          if (err) reject(err);
+          else resolve(rows);
+        }
+      );
     });
   }
 }
